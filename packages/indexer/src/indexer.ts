@@ -351,8 +351,6 @@ export async function run<TFilter, TBlock>(
 
     let onConnectCalled = false;
 
-    const abortPromise = abortSignal ? waitForAbort(abortSignal) : null;
-
     while (true) {
       let result: IteratorResult<
         StreamDataResponse<TBlock>,
@@ -360,8 +358,8 @@ export async function run<TFilter, TBlock>(
       >;
 
       try {
-        result = abortPromise
-          ? await Promise.race([stream.next(), abortPromise])
+        result = abortSignal
+          ? await nextWithAbort(stream, abortSignal)
           : await stream.next();
       } catch (e) {
         if (abortSignal?.aborted) {
@@ -578,19 +576,31 @@ export async function run<TFilter, TBlock>(
 }
 
 /**
- * Returns a promise that rejects as soon as the given AbortSignal fires.
- * Used to race against stream.next() so the loop can break on abort.
+ * Races one stream read against an abort signal and removes its listener when
+ * either settles. Using a fresh abort promise prevents reactions from building
+ * up on one long-lived pending promise.
  */
-function waitForAbort(signal: AbortSignal): Promise<never> {
-  return new Promise<never>((_, reject) => {
-    if (signal.aborted) {
-      reject(signal.reason);
-      return;
-    }
-    signal.addEventListener("abort", () => reject(signal.reason), {
+async function nextWithAbort<T>(
+  stream: AsyncIterator<T, T>,
+  signal: AbortSignal,
+): Promise<IteratorResult<T, T>> {
+  let onAbort: () => void = () => {};
+  const abortPromise = new Promise<never>((_, reject) => {
+    onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, {
       once: true,
     });
+
+    if (signal.aborted) {
+      onAbort();
+    }
   });
+
+  try {
+    return await Promise.race([stream.next(), abortPromise]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
 }
 
 async function registerMiddleware<TFilter, TBlock>(
