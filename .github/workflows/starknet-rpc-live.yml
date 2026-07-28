@@ -1,0 +1,33 @@
+name: Starknet RPC live compatibility
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *"
+
+permissions: {}
+
+jobs:
+  compatibility:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set Node version
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v6
+      - name: Install dependencies
+        run: pnpm install --strict-peer-dependencies=false
+      - name: Probe configured endpoints
+        run: pnpm --filter @apibara/starknet-rpc test:live
+        env:
+          TEST_STARKNET_RPC_V09_HTTP_URL: ${{ secrets.TEST_STARKNET_RPC_V09_HTTP_URL }}
+          TEST_STARKNET_RPC_V09_WS_URL: ${{ secrets.TEST_STARKNET_RPC_V09_WS_URL }}
+          TEST_STARKNET_RPC_V010_HTTP_URL: ${{ secrets.TEST_STARKNET_RPC_V010_HTTP_URL }}
+          TEST_STARKNET_RPC_V010_WS_URL: ${{ secrets.TEST_STARKNET_RPC_V010_WS_URL }}
+          TEST_STARKNET_PATHFINDER_HTTP_URL: ${{ secrets.TEST_STARKNET_PATHFINDER_HTTP_URL }}
+          TEST_STARKNET_PATHFINDER_WS_URL: ${{ secrets.TEST_STARKNET_PATHFINDER_WS_URL }}
+          TEST_STARKNET_JUNO_HTTP_URL: ${{ secrets.TEST_STARKNET_JUNO_HTTP_URL }}
+          TEST_STARKNET_JUNO_WS_URL: ${{ secrets.TEST_STARKNET_JUNO_WS_URL }}

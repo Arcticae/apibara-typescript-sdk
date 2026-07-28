@@ -4,6 +4,7 @@ This monorepo contains all Apibara Typescript and Javascript libraries.
 
  - [`@apibara/protocol`](https://github.com/apibara/typescript-sdk/tree/main/packages/protocol): provides a client to connect to an Apibara stream.
  - [`@apibara/starknet`](https://github.com/apibara/typescript-sdk/tree/main/packages/starknet): provides types to parse StarkNet data.
+ - [`@apibara/starknet-rpc`](https://github.com/apibara/typescript-sdk/tree/main/packages/starknet-rpc): streams Starknet data from standard JSON-RPC endpoints.
 
 For more information, refer to each library's README file.
 
