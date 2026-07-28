@@ -1,3 +1,5 @@
+export { StarknetJsonRpcClient } from "./client";
+export type { StarknetRpcClientOptions } from "./client";
 export {
   StarknetRpcCapabilityError,
   StarknetRpcError,
@@ -6,6 +8,9 @@ export {
 export type { BlockMapper } from "./block-mapper";
 export type { FetchPlan } from "./fetch-plan";
 export { FilterSet } from "./filter";
+export { StarknetEndpointCapabilities } from "./endpoint-capabilities";
+export { StarknetRpcCapabilities, parseSpecVersion } from "./rpc-capabilities";
+export type { StarknetRpcSubscriptionCapabilities } from "./rpc-capabilities";
 export type {
   StarknetRpcBlock,
   StarknetRpcExecutionResources,
