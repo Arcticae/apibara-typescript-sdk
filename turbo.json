@@ -10,7 +10,14 @@
     },
     "test:ci": {
       "dependsOn": ["build"],
-      "env": ["TEST_EVM_RPC_URL", "TEST_EVM_SEPOLIA_RPC_URL"]
+      "env": [
+        "TEST_EVM_RPC_URL",
+        "TEST_EVM_SEPOLIA_RPC_URL",
+        "TEST_STARKNET_RPC_V010_HTTP_URL",
+        "TEST_STARKNET_RPC_V010_WS_URL",
+        "TEST_STARKNET_RPC_V09_HTTP_URL",
+        "TEST_STARKNET_RPC_V09_WS_URL"
+      ]
     },
     "typecheck": {
       "cache": false

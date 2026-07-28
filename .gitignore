@@ -8,3 +8,6 @@ bun.lockb
 .env
 playground/
 .DS_Store
+
+# Private live-RPC endpoints used by *.integration tests (never commit URLs).
+live-endpoints.local.json

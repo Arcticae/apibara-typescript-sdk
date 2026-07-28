@@ -25,8 +25,7 @@
     "lint:fix": "pnpm lint --write",
     "format": "biome format . --write",
     "test": "vitest",
-    "test:ci": "vitest run",
-    "test:live": "vitest run tests/live.test.ts"
+    "test:ci": "vitest run"
   },
   "devDependencies": {
     "@types/node": "^20.12.13",

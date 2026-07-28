@@ -50,5 +50,12 @@ jobs:
         env:
           TEST_EVM_RPC_URL: ${{ secrets.TEST_EVM_RPC_URL }}
           TEST_EVM_SEPOLIA_RPC_URL: ${{ secrets.TEST_EVM_SEPOLIA_RPC_URL }}
+          # Live Starknet RPC endpoints for @apibara/starknet-rpc's *.integration
+          # suites. Add these as repo/org Actions secrets to enable them; when a
+          # secret is absent the corresponding suite skips automatically.
+          TEST_STARKNET_RPC_V010_HTTP_URL: ${{ secrets.TEST_STARKNET_RPC_V010_HTTP_URL }}
+          TEST_STARKNET_RPC_V010_WS_URL: ${{ secrets.TEST_STARKNET_RPC_V010_WS_URL }}
+          TEST_STARKNET_RPC_V09_HTTP_URL: ${{ secrets.TEST_STARKNET_RPC_V09_HTTP_URL }}
+          TEST_STARKNET_RPC_V09_WS_URL: ${{ secrets.TEST_STARKNET_RPC_V09_WS_URL }}
       - name: Check change files
         run: pnpm beachball check
