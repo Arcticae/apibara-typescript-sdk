@@ -228,9 +228,7 @@ export class ChainTracker {
           !canonicalParent ||
           canonicalParent.blockHash !== block.parentBlockHash
         ) {
-          throw new Error(
-            "Chain reorganization detected. Recovery not implemented",
-          );
+          return this.reconcileLongerReorg(newHead, fetchCursorByHash);
         }
 
         this.#canonical.set(block.blockNumber, block);
@@ -246,6 +244,39 @@ export class ChainTracker {
     this.#head = newHead;
 
     return { status: "success" };
+  }
+
+  private async reconcileLongerReorg(
+    newHead: BlockInfo,
+    fetchCursorByHash: (hash: Bytes) => Promise<BlockInfo | null>,
+  ): Promise<UpdateHeadResult> {
+    let candidate = newHead;
+    while (candidate.blockNumber >= this.#finalized.blockNumber) {
+      const canonical = this.#canonical.get(candidate.blockNumber);
+      if (canonical?.blockHash === candidate.blockHash) {
+        for (
+          let blockNumber = candidate.blockNumber + 1n;
+          blockNumber <= this.#head.blockNumber;
+          blockNumber++
+        ) {
+          this.#canonical.delete(blockNumber);
+        }
+        this.#head = canonical;
+        return {
+          status: "reorg",
+          cursor: blockInfoToCursor(canonical),
+        };
+      }
+      if (candidate.blockNumber === this.#finalized.blockNumber) break;
+      const parent = await fetchCursorByHash(candidate.parentBlockHash);
+      if (!parent) {
+        throw new Error(
+          "Cannot reconcile new head with canonical chain: failed to fetch parent",
+        );
+      }
+      candidate = parent;
+    }
+    throw new Error("Cannot reconcile reorganization before finalized block");
   }
 
   isCanonical({ orderKey, uniqueKey }: Cursor) {

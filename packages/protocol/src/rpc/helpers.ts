@@ -7,3 +7,8 @@ export function blockInfoToCursor(blockInfo: BlockInfo): Cursor {
     uniqueKey: blockInfo.blockHash,
   };
 }
+
+/** Resolve after the requested number of milliseconds. */
+export function sleep(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
