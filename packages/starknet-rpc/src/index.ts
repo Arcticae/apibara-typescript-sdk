@@ -20,6 +20,8 @@ export type {
   StarknetRpcWebSocketCapabilities,
 } from "./probe";
 export { EventRangeOracle } from "./range-oracle";
+export { StarknetRpcStream } from "./stream-config";
+export type { StarknetRpcStreamOptions } from "./stream-config";
 export type {
   StarknetRpcBlock,
   StarknetRpcExecutionResources,
