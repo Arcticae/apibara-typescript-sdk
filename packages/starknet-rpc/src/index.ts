@@ -1,3 +1,5 @@
+export { StarknetJsonRpcClient } from "./client";
+export type { StarknetRpcClientOptions } from "./client";
 export {
   StarknetRpcCapabilityError,
   StarknetRpcError,
@@ -9,6 +11,14 @@ export {
   validateFilter,
 } from "./filter";
 export type { StarknetQueryPlan } from "./filter";
+export {
+  parseSpecVersion,
+  probeStarknetRpc,
+} from "./probe";
+export type {
+  StarknetRpcCapabilities,
+  StarknetRpcWebSocketCapabilities,
+} from "./probe";
 export { EventRangeOracle } from "./range-oracle";
 export type {
   StarknetRpcBlock,
