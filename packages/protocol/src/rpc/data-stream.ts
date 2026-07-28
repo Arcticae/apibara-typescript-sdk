@@ -1,6 +1,10 @@
 import type { StreamDataOptions } from "../client";
 import type { Cursor } from "../common";
-import type { StreamDataRequest, StreamDataResponse } from "../stream";
+import type {
+  DataFinality,
+  StreamDataRequest,
+  StreamDataResponse,
+} from "../stream";
 import { type ChainTracker, createChainTracker } from "./chain-tracker";
 import type { RpcStreamConfig } from "./config";
 import { blockInfoToCursor } from "./helpers";
@@ -29,8 +33,12 @@ type State<TFilter, TBlock> = {
   chainTracker: ChainTracker;
   // Heartbeat interval in milliseconds.
   heartbeatIntervalMs: number;
-  // The request filter.
-  filter: TFilter;
+  // The request filters.
+  filters: readonly TFilter[];
+  // Requested finality.
+  finality: DataFinality;
+  // Last mutable pending revision emitted.
+  lastPendingRevision: string | undefined;
   // The request options.
   options?: StreamDataOptions;
 };
@@ -58,9 +66,11 @@ export class RpcDataStream<TFilter, TBlock> {
       throw new Error("Request.filter: empty.");
     }
 
-    if (this.request.filter.length > 1) {
-      throw new Error("Request.filter: only one filter is supported.");
+    const finality = this.request.finality ?? "accepted";
+    if (finality === "unknown") {
+      throw new Error("Request.finality: unknown finality is not supported.");
     }
+    await this.config.initializeRequest(this.request.filter, finality);
 
     const [head, finalized] = await Promise.all([
       this.config.fetchCursor({ blockTag: "latest" }),
@@ -68,11 +78,11 @@ export class RpcDataStream<TFilter, TBlock> {
     ]);
 
     if (finalized === null) {
-      throw new Error("EvmRpcStream requires a finalized block");
+      throw new Error("RPC stream requires a finalized block");
     }
 
     if (head === null) {
-      throw new Error("EvmRpcStream requires a chain with blocks.");
+      throw new Error("RPC stream requires a chain with blocks.");
     }
 
     const chainTracker = createChainTracker({
@@ -111,7 +121,9 @@ export class RpcDataStream<TFilter, TBlock> {
       chainTracker,
       config: this.config,
       heartbeatIntervalMs: this.heartbeatIntervalMs,
-      filter: this.request.filter[0],
+      filters: this.request.filter,
+      finality,
+      lastPendingRevision: undefined,
       options: this.options,
     };
   }
@@ -180,11 +192,20 @@ async function* dataStreamLoop<TFilter, TBlock>(
             for await (const msg of backfillFinalizedBlocks(state)) {
               messages.push(msg);
             }
+          } else if (state.finality === "finalized") {
+            await waitForFinalizedRefresh(state);
           } else {
             if (isAtHead(state)) {
-              attributes.actionWaitForHeadChange = true;
-              for await (const msg of waitForHeadChange(state)) {
-                messages.push(msg);
+              if (state.finality === "pending") {
+                attributes.actionWaitForHeadChange = true;
+                for await (const msg of pollPending(state)) {
+                  messages.push(msg);
+                }
+              } else {
+                attributes.actionWaitForHeadChange = true;
+                for await (const msg of waitForHeadChange(state)) {
+                  messages.push(msg);
+                }
               }
             } else {
               attributes.actionProduceLiveBlocks = true;
@@ -215,19 +236,19 @@ async function* dataStreamLoop<TFilter, TBlock>(
 async function* backfillFinalizedBlocks<TFilter, TBlock>(
   state: State<TFilter, TBlock>,
 ): AsyncGenerator<StreamDataResponse<TBlock>> {
-  const { cursor, chainTracker, config, filter } = state;
+  const { cursor, chainTracker, config, filters } = state;
   const finalized = chainTracker.finalized();
 
   // While backfilling we want to regularly send some blocks (even if empty) so
   // that the client can store the cursor.
   const force = shouldForceBackfill(state);
 
-  const filterData = await config.fetchBlockRange({
+  const filterData = await config.fetchBlockRangeMany({
     startBlock: cursor.orderKey + 1n,
     maxBlock: finalized.orderKey,
     force,
     clampAllowed: true,
-    filter,
+    filters,
   });
 
   if (filterData.endBlock > finalized.orderKey) {
@@ -244,7 +265,7 @@ async function* backfillFinalizedBlocks<TFilter, TBlock>(
       data: {
         cursor: data.cursor,
         endCursor: data.endCursor,
-        data: [data.block],
+        data: data.blocks,
         finality: "finalized",
         production: "backfill",
       },
@@ -266,7 +287,7 @@ async function* backfillFinalizedBlocks<TFilter, TBlock>(
 async function* produceLiveBlocks<TFilter, TBlock>(
   state: State<TFilter, TBlock>,
 ): AsyncGenerator<StreamDataResponse<TBlock>> {
-  const { config, cursor, chainTracker, filter } = state;
+  const { config, cursor, chainTracker, filters } = state;
 
   if (shouldRefreshHead(state)) {
     const maybeNewHead = await config.fetchCursor({ blockTag: "latest" });
@@ -301,12 +322,12 @@ async function* produceLiveBlocks<TFilter, TBlock>(
 
   const head = chainTracker.head();
 
-  const filterData = await config.fetchBlockRange({
+  const filterData = await config.fetchBlockRangeMany({
     startBlock: cursor.orderKey + 1n,
     maxBlock: head.orderKey,
     force: false,
     clampAllowed: false,
-    filter,
+    filters,
   });
 
   if (filterData.data.length === 0 && head.uniqueKey !== undefined) {
@@ -315,8 +336,9 @@ async function* produceLiveBlocks<TFilter, TBlock>(
       state.lastEmptyBlockNumber === undefined ||
       head.orderKey > state.lastEmptyBlockNumber
     ) {
-      const { data } = await config.fetchHeaderByHash({
+      const { data } = await config.fetchHeaderByHashMany({
         blockHash: head.uniqueKey,
+        filters,
       });
 
       yield {
@@ -324,7 +346,7 @@ async function* produceLiveBlocks<TFilter, TBlock>(
         data: {
           cursor: data.cursor,
           endCursor: data.endCursor,
-          data: [data.block],
+          data: data.blocks,
           finality: "accepted",
           production: "live",
         },
@@ -334,12 +356,12 @@ async function* produceLiveBlocks<TFilter, TBlock>(
     }
   }
 
-  for (const { cursor, endCursor, block } of filterData.data) {
+  for (const { cursor, endCursor, blocks } of filterData.data) {
     if (!chainTracker.isCanonical(endCursor)) {
       throw new Error("Trying to process non-canonical block");
     }
 
-    if (block !== null) {
+    if (blocks.some((block) => block !== null)) {
       state.lastHeartbeat = Date.now();
       const production = isAtHead(state) ? "live" : "backfill";
 
@@ -348,7 +370,7 @@ async function* produceLiveBlocks<TFilter, TBlock>(
         data: {
           cursor,
           endCursor,
-          data: [block],
+          data: blocks,
           finality: "accepted",
           production,
         },
@@ -359,7 +381,78 @@ async function* produceLiveBlocks<TFilter, TBlock>(
       orderKey: endCursor.orderKey,
       uniqueKey: endCursor.uniqueKey,
     };
+    state.lastPendingRevision = undefined;
   }
+}
+
+async function* pollPending<TFilter, TBlock>(
+  state: State<TFilter, TBlock>,
+): AsyncGenerator<StreamDataResponse<TBlock>> {
+  const maybeNewHead = await state.config.fetchCursor({ blockTag: "latest" });
+  if (maybeNewHead === null) {
+    throw new Error("Failed to fetch the latest block");
+  }
+  const headResult = await state.chainTracker.updateHead({
+    newHead: maybeNewHead,
+    fetchCursorByHash: (blockHash) => state.config.fetchCursor({ blockHash }),
+    fetchCursorRange: (args) => state.config.fetchCursorRange(args),
+  });
+  state.lastHeadRefresh = Date.now();
+
+  if (headResult.status !== "unchanged") {
+    if (state.lastPendingRevision !== undefined) {
+      yield {
+        _tag: "invalidate",
+        invalidate: { cursor: state.cursor },
+      };
+    }
+    state.lastPendingRevision = undefined;
+    if (
+      headResult.status === "reorg" &&
+      shouldInvalidateProcessedLiveData(state, headResult.cursor)
+    ) {
+      state.cursor = headResult.cursor;
+      state.lastEmptyBlockNumber = undefined;
+      yield {
+        _tag: "invalidate",
+        invalidate: { cursor: headResult.cursor },
+      };
+    }
+    return;
+  }
+
+  const pending = await state.config.fetchPendingBlocks(state.filters);
+  if (!pending) {
+    await sleep(state.config.pendingRefreshIntervalMs());
+    return;
+  }
+  if (pending.blocks.length !== state.filters.length) {
+    throw new Error(
+      "Network-specific pending stream returned misaligned filter data",
+    );
+  }
+  if (pending.revision === state.lastPendingRevision) {
+    await sleep(state.config.pendingRefreshIntervalMs());
+    return;
+  }
+  if (state.lastPendingRevision !== undefined) {
+    yield {
+      _tag: "invalidate",
+      invalidate: { cursor: state.cursor },
+    };
+  }
+  state.lastPendingRevision = pending.revision;
+  state.lastHeartbeat = Date.now();
+  yield {
+    _tag: "data",
+    data: {
+      cursor: state.cursor,
+      endCursor: pending.endCursor,
+      data: pending.blocks,
+      finality: "pending",
+      production: "live",
+    },
+  };
 }
 
 async function* waitForHeadChange<TBlock>(
@@ -396,7 +489,7 @@ async function* waitForHeadChange<TBlock>(
         const finalizedTimeout = finalizedRefreshDeadline - now;
 
         // Wait until whatever happens next.
-        await sleep(
+        await config.waitForHeadChange(
           Math.min(
             heartbeatTimeout,
             finalizedTimeout,
@@ -442,6 +535,7 @@ function shouldForceBackfill(state: State<unknown, unknown>): boolean {
 }
 
 function shouldContinue(state: State<unknown, unknown>): boolean {
+  if (state.options?.signal?.aborted) return false;
   const { endingCursor } = state.options || {};
   if (endingCursor === undefined) return true;
 
@@ -492,4 +586,15 @@ function lastProcessedLiveBlock(state: State<unknown, unknown>): bigint {
 
 function sleep(duration: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, duration));
+}
+
+async function waitForFinalizedRefresh(
+  state: State<unknown, unknown>,
+): Promise<void> {
+  const heartbeatDeadline = state.lastHeartbeat + state.heartbeatIntervalMs;
+  const finalizedDeadline =
+    state.lastFinalizedRefresh + state.config.finalizedRefreshIntervalMs();
+  await sleep(
+    Math.max(1, Math.min(heartbeatDeadline, finalizedDeadline) - Date.now()),
+  );
 }

@@ -93,7 +93,95 @@ class EmptyLiveHeadConfig extends RpcStreamConfig<string, TestBlock> {
   }
 }
 
+class MultiFilterConfig extends EmptyLiveHeadConfig {
+  override async fetchBlockRange(
+    args: FetchBlockRangeArgs<string>,
+  ): Promise<FetchBlockRangeResult<TestBlock>> {
+    this.fetchBlockRangeCalls.push(args);
+    return {
+      startBlock: args.startBlock,
+      endBlock: args.maxBlock,
+      data: [
+        {
+          cursor: cursorForBlock(args.startBlock - 1n),
+          endCursor: cursorForBlock(args.startBlock)!,
+          block:
+            args.filter === "empty" ? null : { blockNumber: args.startBlock },
+        },
+      ],
+    };
+  }
+}
+
 describe("RpcDataStream", () => {
+  it("keeps response blocks aligned with multiple requested filters", async () => {
+    const config = new MultiFilterConfig();
+    const client = new RpcClient(config);
+    const stream = client.streamData({
+      finality: "accepted",
+      filter: ["matched", "empty"],
+      startingCursor: { orderKey: 1n },
+    });
+    const iterator = stream[Symbol.asyncIterator]();
+
+    try {
+      const message = await iterator.next();
+      expect(message.done).toBe(false);
+      expect(message.value).toMatchObject({
+        _tag: "data",
+        data: {
+          endCursor: { orderKey: 2n },
+          data: [{ blockNumber: 2n }, null],
+        },
+      });
+      expect(config.fetchBlockRangeCalls.map((call) => call.filter)).toEqual([
+        "matched",
+        "empty",
+      ]);
+    } finally {
+      await iterator.return?.();
+    }
+  });
+
+  it("emits mutable pending snapshots without advancing accepted state", async () => {
+    const config = new MultiFilterConfig();
+    config.headBlock = 1n;
+    let revision = 0;
+    config.fetchPendingBlocks = async (filters) => ({
+      revision: String(++revision),
+      blocks: filters.map(() => ({ blockNumber: 2n })),
+      endCursor: { orderKey: 2n },
+    });
+    const client = new RpcClient(config);
+    const iterator = client
+      .streamData({
+        finality: "pending",
+        filter: ["a", "b"],
+        startingCursor: { orderKey: 1n },
+      })
+      [Symbol.asyncIterator]();
+
+    try {
+      const first = await iterator.next();
+      expect(first.value).toMatchObject({
+        _tag: "data",
+        data: {
+          cursor: { orderKey: 1n },
+          endCursor: { orderKey: 2n },
+          finality: "pending",
+          data: [{ blockNumber: 2n }, { blockNumber: 2n }],
+        },
+      });
+      const invalidation = await iterator.next();
+      expect(invalidation.value).toEqual({
+        _tag: "invalidate",
+        invalidate: { cursor: { orderKey: 1n, uniqueKey: blockHash(1n) } },
+      });
+    } finally {
+      await iterator.return?.();
+    }
+  });
+
   it("does not refetch empty accepted blocks as the live head advances", async () => {
     const config = new EmptyLiveHeadConfig();
     const client = new RpcClient(config);
