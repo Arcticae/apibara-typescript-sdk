@@ -11,6 +11,8 @@ export { FilterSet } from "./filter";
 export { StarknetEndpointCapabilities } from "./endpoint-capabilities";
 export { StarknetRpcCapabilities, parseSpecVersion } from "./rpc-capabilities";
 export type { StarknetRpcSubscriptionCapabilities } from "./rpc-capabilities";
+export { StarknetRpcStream } from "./stream-config";
+export type { StarknetRpcStreamOptions } from "./stream-config";
 export type {
   StarknetRpcBlock,
   StarknetRpcExecutionResources,
