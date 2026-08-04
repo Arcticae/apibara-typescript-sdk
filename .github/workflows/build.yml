@@ -59,3 +59,50 @@ jobs:
           TEST_STARKNET_RPC_V09_WS_URL: ${{ secrets.TEST_STARKNET_RPC_V09_WS_URL }}
       - name: Check change files
         run: pnpm beachball check
+
+  # Reorg/invalidate coverage for @apibara/starknet-rpc against a controllable
+  # node. Runs a local starknet-devnet in Docker (pinned; serves RPC spec
+  # 0.10.2) and points the reorg suite at it. The suite skips everywhere this
+  # URL is not set, so it only executes in this job.
+  starknet-rpc-devnet-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set Node version
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v6
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v1
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Start starknet-devnet
+        run: |
+          docker run -d --name devnet -p 5050:5050 \
+            shardlabs/starknet-devnet-rs:0.8.2 \
+            --host 0.0.0.0 --port 5050 \
+            --state-archive-capacity full \
+            --block-generation-on demand \
+            --seed 0
+          for i in $(seq 1 30); do
+            if curl -sf -X POST http://127.0.0.1:5050/rpc \
+              -H 'content-type: application/json' \
+              -d '{"jsonrpc":"2.0","id":1,"method":"starknet_specVersion","params":[]}'; then
+              echo "devnet ready"; break
+            fi
+            sleep 1
+          done
+      - name: Install dependencies
+        run: pnpm install --strict-peer-dependencies=false
+      - name: Run build
+        run: pnpm build
+      - name: Run devnet reorg tests
+        run: pnpm --filter @apibara/starknet-rpc exec vitest run tests/reorg.devnet.test.ts
+        env:
+          # Local dockerized devnet from the step above — not a private endpoint.
+          TEST_STARKNET_DEVNET_URL: http://127.0.0.1:5050/rpc
+      - name: Stop starknet-devnet
+        if: always()
+        run: docker rm -f devnet

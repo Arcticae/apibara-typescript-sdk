@@ -40,15 +40,18 @@ const LOCAL_FILE = fileURLToPath(
   new URL("./live-endpoints.local.json", import.meta.url),
 );
 
-let localCache: Partial<Record<LiveEndpointName, LiveEndpoint>> | undefined;
+type LocalConfig = Partial<Record<LiveEndpointName, LiveEndpoint>> & {
+  /** JSON-RPC URL of a locally-run starknet-devnet, for the reorg suite. */
+  devnet?: string;
+};
 
-function readLocalFile(): Partial<Record<LiveEndpointName, LiveEndpoint>> {
+let localCache: LocalConfig | undefined;
+
+function readLocalFile(): LocalConfig {
   if (localCache) return localCache;
   try {
     localCache = existsSync(LOCAL_FILE)
-      ? (JSON.parse(readFileSync(LOCAL_FILE, "utf8")) as Partial<
-          Record<LiveEndpointName, LiveEndpoint>
-        >)
+      ? (JSON.parse(readFileSync(LOCAL_FILE, "utf8")) as LocalConfig)
       : {};
   } catch (error) {
     throw new Error(
@@ -78,4 +81,15 @@ export function getLiveEndpoint(
   if (!httpUrl) return undefined;
   const wsUrl = clean(process.env[keys.ws]) ?? clean(local?.wsUrl);
   return { httpUrl, wsUrl };
+}
+
+/**
+ * JSON-RPC URL of a locally-run starknet-devnet for the reorg suite, or
+ * `undefined` when not configured. Set via the `TEST_STARKNET_DEVNET_URL`
+ * env var (the CI job provides it) or a `devnet` entry in the local file.
+ */
+export function getDevnetUrl(): string | undefined {
+  return (
+    clean(process.env.TEST_STARKNET_DEVNET_URL) ?? clean(readLocalFile().devnet)
+  );
 }
